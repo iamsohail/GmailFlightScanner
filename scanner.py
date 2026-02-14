@@ -75,6 +75,7 @@ KNOWN_AIRLINES = {
     "airvistara": "Vistara",
     "akasaair": "Akasa Air",
     "airasia": "AirAsia",
+    "air asia": "AirAsia",
     "emirates": "Emirates",
     "etihad": "Etihad",
     "qatar": "Qatar Airways",
@@ -93,10 +94,12 @@ KNOWN_AIRLINES = {
     "thai": "Thai Airways",
     "cathay": "Cathay Pacific",
     "cathaypacific": "Cathay Pacific",
-    "jet": "Jet Airways",
+    "jet airways": "Jet Airways",
     "jetairways": "Jet Airways",
     "goair": "Go First",
+    "go air": "Go First",
     "gofirst": "Go First",
+    "go first": "Go First",
     "allianceair": "Alliance Air",
     "starair": "Star Air",
     "flydubai": "FlyDubai",
@@ -273,9 +276,15 @@ def _extract_parts(part):
 
 def extract_flight_number(text):
     """Extract flight number in IATA format (e.g., AI302, 6E2341)."""
+    # 2-letter codes that look like airline codes but are not (common false positives)
+    FLIGHT_NUM_STOPWORDS = {"NA", "NO", "IN", "TO", "AT", "ON", "OR", "IS", "IF", "UP",
+                            "AN", "AS", "BY", "DO", "GO", "HE", "IT", "ME", "MY", "OF",
+                            "SO", "US", "WE", "AM", "PM", "RS", "MR", "MS", "DR", "ID"}
     pattern = r"\b([A-Z0-9]{2})\s?(\d{1,4})\b"
     matches = re.findall(pattern, text)
     for code, num in matches:
+        if code in FLIGHT_NUM_STOPWORDS:
+            continue
         if code in AIRLINE_CODES or (code[0].isalpha() and code[1].isalpha()):
             return f"{code}{num}"
     # Fallback: look for common patterns with airline context
@@ -407,15 +416,12 @@ def extract_airline(text, sender):
 
 
 def extract_pnr(text):
-    """Extract PNR or booking reference."""
+    """Extract PNR or booking reference (standard 6-char alphanumeric format)."""
     patterns = [
-        # Standard PNR patterns (5-8 chars)
-        r"(?:PNR|pnr|Pnr)\s*(?:no\.?|number|#|:)?\s*:?\s*\b([A-Z0-9]{5,8})\b",
-        r"(?:booking\s*(?:ref|reference|id|code|no)|confirmation\s*(?:no|number|code|#))\s*:?\s*\b([A-Z0-9]{5,8})\b",
+        # Standard PNR patterns (exactly 5-6 chars)
+        r"(?:PNR|pnr|Pnr)\s*(?:no\.?|number|#|:)?\s*:?\s*\b([A-Z0-9]{5,6})\b",
+        r"(?:booking\s*(?:ref|reference|code|no)|confirmation\s*(?:no|number|code|#))\s*:?\s*\b([A-Z0-9]{5,6})\b",
         r"(?:reference|ref\.?)\s*(?:no\.?|number|#|:)?\s*:?\s*\b([A-Z0-9]{6})\b",
-        # Booking platform IDs (longer, up to 20 chars) - Ixigo, MakeMyTrip, IndiGo
-        r"(?:booking\s*id|booking\s*Id)\s*:?\s*\b([A-Z0-9]{8,20})\b",
-        r"(?:trip\s*id|Trip\s*ID)\s*:?\s*\b(\d{10,20})\b",
         # IndiGo itinerary PNR from subject: "Itinerary - XXXXXX"
         r"[Ii]tinerary\s*[-–—]\s*\b([A-Z0-9]{6})\b",
     ]
@@ -526,6 +532,10 @@ def main():
         "credit card communication", "voucher worth",
         "challenge #", "intermiles credited",
         "booking has been changed", "your booking has been",
+        "booking cancelled", "booking canceled",
+        "confirmation voucher", "beach hotel",
+        "reference no.", "gst invoice", "tax invoice",
+        "cabin baggage reminder",
     ]
     # International airlines to exclude (user only flies domestic)
     EXCLUDE_AIRLINES = {"Emirates", "United Airlines", "Etihad", "Qatar Airways",
