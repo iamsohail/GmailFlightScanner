@@ -164,7 +164,7 @@ AIRPORT_STOPWORDS = {
     "GEN", "TAT", "OBC", "INF", "ADT", "CHD", "PAX", "SEQ", "ROW", "QTY",
     "AMT", "TAX", "SUB", "TTL", "NET", "MAX", "MIN", "AVG", "REQ", "RES",
     "MOB", "TEL", "WEB", "ORG", "GOV", "EDU", "MIL", "INT", "EXT", "SRC",
-    "DST", "MSG", "ERR", "LOG", "CMD", "SYS", "BUS", "CAB",
+    "DST", "MSG", "ERR", "LOG", "CMD", "SYS", "BUS", "CAB", "EMI", "EMD",
 }
 
 
@@ -409,9 +409,15 @@ def extract_airline(text, sender):
 def extract_pnr(text):
     """Extract PNR or booking reference."""
     patterns = [
+        # Standard PNR patterns (5-8 chars)
         r"(?:PNR|pnr|Pnr)\s*(?:no\.?|number|#|:)?\s*:?\s*\b([A-Z0-9]{5,8})\b",
         r"(?:booking\s*(?:ref|reference|id|code|no)|confirmation\s*(?:no|number|code|#))\s*:?\s*\b([A-Z0-9]{5,8})\b",
         r"(?:reference|ref\.?)\s*(?:no\.?|number|#|:)?\s*:?\s*\b([A-Z0-9]{6})\b",
+        # Booking platform IDs (longer, up to 20 chars) - Ixigo, MakeMyTrip, IndiGo
+        r"(?:booking\s*id|booking\s*Id)\s*:?\s*\b([A-Z0-9]{8,20})\b",
+        r"(?:trip\s*id|Trip\s*ID)\s*:?\s*\b(\d{10,20})\b",
+        # IndiGo itinerary PNR from subject: "Itinerary - XXXXXX"
+        r"[Ii]tinerary\s*[-–—]\s*\b([A-Z0-9]{6})\b",
     ]
     # Common words/substrings that get falsely captured as PNR codes
     pnr_stopwords = {
@@ -519,7 +525,14 @@ def main():
         "tax invoice", "gst invoice", "vrl travels",
         "credit card communication", "voucher worth",
         "challenge #", "intermiles credited",
+        "booking has been changed", "your booking has been",
     ]
+    # International airlines to exclude (user only flies domestic)
+    EXCLUDE_AIRLINES = {"Emirates", "United Airlines", "Etihad", "Qatar Airways",
+                        "Singapore Airlines", "Lufthansa", "British Airways", "KLM",
+                        "Air France", "Delta Airlines", "American Airlines",
+                        "Southwest Airlines", "Thai Airways", "Cathay Pacific",
+                        "FlyDubai", "Oman Air", "Saudia", "Turkish Airlines"}
     def _is_excluded(subject):
         s = subject.lower()
         return any(kw in s for kw in EXCLUDE_SUBJECTS)
@@ -527,6 +540,11 @@ def main():
     non_excluded = [f for f in flights if not _is_excluded(f["Email Subject"])]
     print(f"   Excluded {len(flights) - len(non_excluded)} non-flight emails by subject")
     flights = non_excluded
+
+    # Exclude international airlines (domestic flights only)
+    domestic = [f for f in flights if f["Airline"] not in EXCLUDE_AIRLINES]
+    print(f"   Excluded {len(flights) - len(domestic)} international airline emails")
+    flights = domestic
 
     # Filter: keep only actual flight bookings (must have flight number, PNR, or route)
     actual_flights = [
