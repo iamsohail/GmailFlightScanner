@@ -14,7 +14,11 @@ from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
+# Passenger name variants to filter bookings (case-insensitive)
+PASSENGER_NAMES = ["mohammad sohail ahmad", "sohail ahmad"]
+
 SEARCH_QUERIES = [
+    # Generic flight terms
     '"boarding pass"',
     '"flight confirmation"',
     '"flight itinerary"',
@@ -23,6 +27,42 @@ SEARCH_QUERIES = [
     '"trip confirmation" flight',
     '"PNR"',
     '"flight booking"',
+    # Active Indian airlines
+    'from:indigo subject:itinerary',
+    'from:goindigo subject:itinerary',
+    'from:airindia',
+    'from:airindiaexpress',
+    'from:spicejet',
+    'from:akasaair',
+    'from:allianceair',
+    'from:starair',
+    'from:flybig',
+    # Defunct / renamed Indian airlines
+    'from:jetairways',
+    'from:goair',
+    'from:gofirst',
+    'from:airasiago',
+    'from:airasia subject:booking',
+    'from:airdeccan',
+    'from:airsahara',
+    'from:kingfisherairlines',
+    'from:flygokingfisher',
+    'from:airvistara',
+    'from:vfrpl',
+    'from:aircosta',
+    'from:airpegasus',
+    'from:trujet',
+    'from:paramountairways',
+    'from:mdlrairlines',
+    'from:zoomair',
+    # Booking platforms (flight-specific)
+    'from:makemytrip flight',
+    'from:ixigo flight',
+    'from:cleartrip flight',
+    'from:yatra flight',
+    'from:easemytrip flight',
+    'from:goibibo flight',
+    'from:happyeasygo flight',
 ]
 
 # Known airlines for name extraction
@@ -98,6 +138,35 @@ AIRLINE_CODES = {
     "TK": "Turkish Airlines",
 }
 
+# Common 3-letter English words to exclude from airport code detection
+AIRPORT_STOPWORDS = {
+    "THE", "AND", "FOR", "YOU", "ARE", "HAS", "WAS", "HIS", "HER", "OUR",
+    "NOT", "BUT", "ALL", "CAN", "HAD", "ONE", "OUT", "DAY", "GET", "HIM",
+    "HOW", "ITS", "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID",
+    "GOT", "LET", "SAY", "SHE", "TOO", "USE", "PNR", "ADD", "COM", "NON",
+    "END", "OFF", "RUN", "SET", "TRY", "PUT", "BIG", "FEW", "FAR", "OWN",
+    "SAT", "SIT", "TOP", "RED", "HOT", "CUT", "AGO", "YES", "YET", "RAN",
+    "BED", "BOX", "BOY", "CAR", "DOG", "EAR", "EAT", "EYE", "FLY", "GAS",
+    "GUN", "HIT", "JOB", "KEY", "LAY", "LEG", "LET", "LIE", "MAP", "MRS",
+    "OIL", "PAY", "PER", "RUN", "SIX", "SUN", "TEN", "WAR", "WET", "WIN",
+    "WON", "YES", "AIR", "ACT", "AGE", "AID", "AIM", "ART", "ASK", "BAD",
+    "BAR", "BIT", "BUY", "COP", "CRY", "DIE", "DIG", "DRY", "DUE", "ERA",
+    "FAN", "FAT", "FEE", "FIT", "FUN", "GAP", "HAT", "HIT", "ICE", "ILL",
+    "JAM", "JET", "LAW", "LAP", "LOG", "LOT", "LOW", "MAN", "MEN", "MET",
+    "MIX", "MOB", "MUD", "NET", "NOR", "NUT", "ODD", "PAN", "PEN", "PET",
+    "PIN", "PIT", "POT", "RAW", "RIB", "RID", "ROB", "ROD", "ROW", "RUB",
+    "SAD", "SIP", "SKI", "TAP", "TAX", "TIE", "TIN", "TIP", "TOE", "TON",
+    "TOW", "TOY", "TUB", "VAN", "VIA", "VOW", "WEB", "WIG", "WIT", "WOE",
+    "YEN", "ZOO", "FWD", "REF", "INR", "USD", "EUR", "SMS", "OTP", "URL",
+    "PDF", "APP", "API", "RSS", "FAQ", "TBA", "TBD", "ETA", "ETD", "GMT",
+    "IST", "EST", "PST", "CST", "UTC", "BAG", "DEP", "ARR", "VIA", "FLT",
+    "ONS", "UAE", "USA", "DGR", "VRM", "STD", "STA", "AVL", "CNF", "RAC",
+    "GEN", "TAT", "OBC", "INF", "ADT", "CHD", "PAX", "SEQ", "ROW", "QTY",
+    "AMT", "TAX", "SUB", "TTL", "NET", "MAX", "MIN", "AVG", "REQ", "RES",
+    "MOB", "TEL", "WEB", "ORG", "GOV", "EDU", "MIL", "INT", "EXT", "SRC",
+    "DST", "MSG", "ERR", "LOG", "CMD", "SYS", "BUS", "CAB",
+}
+
 
 def authenticate():
     """Authenticate with Gmail API via OAuth2."""
@@ -133,7 +202,7 @@ def search_flights(service):
             result = (
                 service.users()
                 .messages()
-                .list(userId="me", q=query, pageToken=page_token)
+                .list(userId="me", q=query, pageToken=page_token, includeSpamTrash=True)
                 .execute()
             )
             batch = result.get("messages", [])
@@ -222,34 +291,41 @@ def extract_airport_codes(text):
     from_code = ""
     to_code = ""
 
-    # Pattern: "from XXX to YYY" or "XXX → YYY" or "XXX - YYY"
-    patterns = [
-        r"(?:from|departure|depart|origin)\s*:?\s*.*?\b([A-Z]{3})\b",
-        r"(?:to|arrival|arrive|destination)\s*:?\s*.*?\b([A-Z]{3})\b",
+    # Pattern: keyword followed by a 3-letter uppercase airport code (not IGNORECASE for the code)
+    from_patterns = [
+        r"(?i)(?:from|departure|depart|origin)\s*:?\s*.{0,30}?\b([A-Z]{3})\b",
+    ]
+    to_patterns = [
+        r"(?i)(?:to|arrival|arrive|destination)\s*:?\s*.{0,30}?\b([A-Z]{3})\b",
     ]
 
-    from_match = re.search(patterns[0], text, re.IGNORECASE)
-    to_match = re.search(patterns[1], text, re.IGNORECASE)
+    def _valid_airport(code):
+        return code.isupper() and code not in AIRPORT_STOPWORDS
 
-    if from_match:
-        candidate = from_match.group(1)
-        if candidate.isupper() and candidate not in ("THE", "AND", "FOR", "YOU", "ARE", "HAS", "WAS", "HIS", "HER", "OUR", "NOT", "BUT", "ALL", "CAN", "HAD", "HER", "ONE", "OUR", "OUT", "DAY", "GET", "HIM", "HOW", "ITS", "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID", "GOT", "LET", "SAY", "SHE", "TOO", "USE", "PNR"):
-            from_code = candidate
+    for pattern in from_patterns:
+        for match in re.finditer(pattern, text):
+            candidate = match.group(1)
+            if _valid_airport(candidate):
+                from_code = candidate
+                break
 
-    if to_match:
-        candidate = to_match.group(1)
-        if candidate.isupper() and candidate not in ("THE", "AND", "FOR", "YOU", "ARE", "HAS", "WAS", "HIS", "HER", "OUR", "NOT", "BUT", "ALL", "CAN", "HAD", "HER", "ONE", "OUR", "OUT", "DAY", "GET", "HIM", "HOW", "ITS", "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID", "GOT", "LET", "SAY", "SHE", "TOO", "USE", "PNR"):
-            to_code = candidate
+    for pattern in to_patterns:
+        for match in re.finditer(pattern, text):
+            candidate = match.group(1)
+            if _valid_airport(candidate):
+                to_code = candidate
+                break
 
-    # Fallback: look for "XXX → YYY" or "XXX - YYY" or "XXX to YYY" direct patterns
+    # Fallback: look for "XXX → YYY" or "XXX - YYY" route patterns (strict uppercase only)
     if not from_code or not to_code:
-        route_pattern = r"\b([A-Z]{3})\s*(?:→|->|–|—|-|to)\s*([A-Z]{3})\b"
+        route_pattern = r"\b([A-Z]{3})\s*(?:→|->|–|—|-)\s*([A-Z]{3})\b"
         route_match = re.search(route_pattern, text)
         if route_match:
-            if not from_code:
-                from_code = route_match.group(1)
-            if not to_code:
-                to_code = route_match.group(2)
+            c1, c2 = route_match.group(1), route_match.group(2)
+            if not from_code and _valid_airport(c1):
+                from_code = c1
+            if not to_code and _valid_airport(c2):
+                to_code = c2
 
     return from_code, to_code
 
@@ -283,16 +359,21 @@ def extract_flight_date(text):
                     groups = match.groups()
                     if fmt == "%d %b %Y":
                         date_str = f"{groups[0]} {groups[1][:3]} {groups[2]}"
-                        return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+                        parsed = datetime.strptime(date_str, fmt)
                     elif fmt == "%b %d %Y":
                         date_str = f"{groups[0][:3]} {groups[1]} {groups[2]}"
-                        return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+                        parsed = datetime.strptime(date_str, fmt)
                     elif fmt == "%Y-%m-%d":
                         date_str = f"{groups[0]}-{groups[1]}-{groups[2]}"
-                        return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+                        parsed = datetime.strptime(date_str, fmt)
                     elif fmt == "%d/%m/%Y":
                         date_str = f"{groups[0]}/{groups[1]}/{groups[2]}"
-                        return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+                        parsed = datetime.strptime(date_str, fmt)
+                    else:
+                        continue
+                    # Reject dates outside reasonable range
+                    if 1990 <= parsed.year <= 2030:
+                        return parsed.strftime("%Y-%m-%d")
                 except ValueError:
                     continue
 
@@ -328,14 +409,25 @@ def extract_airline(text, sender):
 def extract_pnr(text):
     """Extract PNR or booking reference."""
     patterns = [
-        r"(?:PNR|pnr|Pnr)\s*(?:no\.?|number|#|:)?\s*:?\s*([A-Z0-9]{5,8})",
-        r"(?:booking\s*(?:ref|reference|id|code|no)|confirmation\s*(?:no|number|code|#))\s*:?\s*([A-Z0-9]{5,8})",
-        r"(?:reference|ref\.?)\s*(?:no\.?|number|#|:)?\s*:?\s*([A-Z0-9]{6})",
+        r"(?:PNR|pnr|Pnr)\s*(?:no\.?|number|#|:)?\s*:?\s*\b([A-Z0-9]{5,8})\b",
+        r"(?:booking\s*(?:ref|reference|id|code|no)|confirmation\s*(?:no|number|code|#))\s*:?\s*\b([A-Z0-9]{5,8})\b",
+        r"(?:reference|ref\.?)\s*(?:no\.?|number|#|:)?\s*:?\s*\b([A-Z0-9]{6})\b",
     ]
+    # Common words/substrings that get falsely captured as PNR codes
+    pnr_stopwords = {
+        "NUMBER", "REFERENCE", "BOOKING", "CONFIRM", "DETAIL", "DETAILS",
+        "FLIGHT", "STATUS", "CANCEL", "CHANGE", "UPDATE", "ERENCE",
+        "RENCE", "UMBER", "ATION", "UMBER", "TICKET", "TRAVEL",
+        "PLEASE", "REFUND", "AMOUNT", "TOTAL", "PRICE", "CHARGE",
+        "EMAIL", "ISSUE", "BOARD", "CHECK", "PRINT", "VALID",
+        "NUMERIC", "STRING", "FORMAT", "RETURN",
+    }
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return match.group(1)
+            candidate = match.group(1).upper()
+            if candidate not in pnr_stopwords:
+                return candidate
     return ""
 
 
@@ -375,6 +467,10 @@ def parse_email(service, msg_id):
     airline = extract_airline(full_text, sender)
     pnr = extract_pnr(full_text)
 
+    # Check if passenger name appears in the email
+    text_lower = full_text.lower()
+    has_passenger_name = any(name in text_lower for name in PASSENGER_NAMES)
+
     return {
         "Date": flight_date or email_date,
         "Airline": airline,
@@ -384,6 +480,7 @@ def parse_email(service, msg_id):
         "PNR/Booking Ref": pnr,
         "Email Subject": subject,
         "Email Date": email_date,
+        "_has_name": has_passenger_name,
     }
 
 
@@ -412,6 +509,79 @@ def main():
             flights.append(flight)
         except Exception as e:
             print(f"   Warning: Failed to parse message {msg['id']}: {e}")
+
+    # Exclude non-flight emails by subject keywords
+    EXCLUDE_SUBJECTS = [
+        "hotel booking", "bus booking", "bus ticket", "credit card",
+        "account summary", "savings of rs", "missed out on saving",
+        "message from our ceo", "message from the ceo",
+        "discounts in dubai", "big discounts", "credit note",
+        "tax invoice", "gst invoice", "vrl travels",
+        "credit card communication", "voucher worth",
+        "challenge #", "intermiles credited",
+    ]
+    def _is_excluded(subject):
+        s = subject.lower()
+        return any(kw in s for kw in EXCLUDE_SUBJECTS)
+
+    non_excluded = [f for f in flights if not _is_excluded(f["Email Subject"])]
+    print(f"   Excluded {len(flights) - len(non_excluded)} non-flight emails by subject")
+    flights = non_excluded
+
+    # Filter: keep only actual flight bookings (must have flight number, PNR, or route)
+    actual_flights = [
+        f for f in flights
+        if f["Flight Number"] or f["PNR/Booking Ref"] or (f["From"] and f["To"])
+    ]
+    print(f"   Filtered to {len(actual_flights)} actual flight records (removed {len(flights) - len(actual_flights)} non-flight emails)")
+
+    # Filter: keep only bookings with passenger name
+    named_flights = [f for f in actual_flights if f["_has_name"]]
+    print(f"   Filtered to {len(named_flights)} records matching passenger name (removed {len(actual_flights) - len(named_flights)} others)")
+    flights = named_flights
+
+    # Remove internal field before writing CSV
+    for f in flights:
+        del f["_has_name"]
+
+    # Deduplicate by PNR: keep the record with the most extracted data
+    def _richness(f):
+        """Score how much data a record has (more = better)."""
+        return sum([
+            bool(f["Flight Number"]),
+            bool(f["From"]),
+            bool(f["To"]),
+            bool(f["Airline"]),
+            bool(f["Date"]),
+            bool(f["PNR/Booking Ref"]),
+        ])
+
+    seen_pnrs = {}
+    deduped = []
+    for f in flights:
+        pnr = f["PNR/Booking Ref"]
+        if not pnr:
+            # No PNR — keep as-is (deduplicate by flight number + date instead)
+            key = (f["Flight Number"], f["Date"])
+            if key == ("", ""):
+                deduped.append(f)
+            elif key not in seen_pnrs:
+                seen_pnrs[key] = f
+                deduped.append(f)
+            elif _richness(f) > _richness(seen_pnrs[key]):
+                deduped.remove(seen_pnrs[key])
+                seen_pnrs[key] = f
+                deduped.append(f)
+        elif pnr not in seen_pnrs:
+            seen_pnrs[pnr] = f
+            deduped.append(f)
+        elif _richness(f) > _richness(seen_pnrs[pnr]):
+            deduped.remove(seen_pnrs[pnr])
+            seen_pnrs[pnr] = f
+            deduped.append(f)
+
+    print(f"   Deduplicated to {len(deduped)} unique flights (removed {len(flights) - len(deduped)} duplicates)")
+    flights = deduped
 
     # Sort by date (oldest first), empty dates go last
     flights.sort(key=lambda f: f["Date"] if f["Date"] else "9999-99-99")
