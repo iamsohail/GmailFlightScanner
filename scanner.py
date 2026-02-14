@@ -205,7 +205,7 @@ def search_flights(service):
             result = (
                 service.users()
                 .messages()
-                .list(userId="me", q=query, pageToken=page_token, includeSpamTrash=True)
+                .list(userId="me", q=f"{query} has:attachment", pageToken=page_token, includeSpamTrash=True)
                 .execute()
             )
             batch = result.get("messages", [])
